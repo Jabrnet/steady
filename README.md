@@ -1,4 +1,4 @@
-# Steady: Tremor Filtering Accessibility Tool
+ # Steady: Tremor Filtering Accessibility Tool
 
   ## Overview
 
