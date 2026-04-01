@@ -9,6 +9,7 @@ setup(
         'evdev',
         'pystray',
         'Pillow',
+        'pygame>=2.5.0',
     ],
     extras_require={
         'dev': ['pytest'],

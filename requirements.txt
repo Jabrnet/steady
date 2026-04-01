@@ -2,4 +2,7 @@ numpy
 evdev
 pystray
 Pillow
+pygame>=2.5.0
+pyatspi
+python-xlib
 pytest

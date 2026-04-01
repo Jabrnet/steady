@@ -1,6 +1,7 @@
 import numpy as np
 import json
 import os
+import time
 from typing import List, Tuple, Dict, Any
 import uuid
 
@@ -95,3 +96,27 @@ class TremorFilter:
         self.correction_history.append(correction)
 
         return (self.x_state, self.y_state)
+
+    def _calculate_correction(self, raw_position: Tuple[float, float],
+                               filtered_position: Tuple[float, float]) -> Dict[str, Any]:
+        dx = filtered_position[0] - raw_position[0]
+        dy = filtered_position[1] - raw_position[1]
+        magnitude = (dx ** 2 + dy ** 2) ** 0.5
+        return {
+            'timestamp': time.time(),
+            'raw': raw_position,
+            'filtered': filtered_position,
+            'delta': (dx, dy),
+            'magnitude': magnitude,
+        }
+
+    def update_params(self, delta: dict) -> None:
+        """Update filter parameters in-place. Called by MLAdapter or training result."""
+        self.current_profile.params.update(delta)
+        self.current_profile.learning_history.append({
+            'timestamp': time.time(),
+            'params': dict(self.current_profile.params),
+        })
+        if len(self.current_profile.learning_history) > 1000:
+            self.current_profile.learning_history = \
+                self.current_profile.learning_history[-500:]

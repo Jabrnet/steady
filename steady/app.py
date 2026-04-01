@@ -16,10 +16,7 @@ logger = logging.getLogger(__name__)
 
 class SteadyState:
     """
-    Thread-safe shared state between the input hook and the tray UI.
-
-    The 'changed' event is set whenever enabled or profile_name changes.
-    The hook thread checks this event and rebuilds its filter accordingly.
+    Thread-safe shared state between the input hook, tray UI, overlay, and ML adapter.
     """
 
     def __init__(self):
@@ -27,6 +24,16 @@ class SteadyState:
         self._enabled = True
         self._profile_name = 'Essential Tremor'
         self.changed = threading.Event()
+
+        # Shared position buffer — set by main() before any thread starts
+        self.position_buffer = None
+
+        # Overlay visibility toggle
+        self._overlay_visible = False
+        self.overlay_changed = threading.Event()
+
+        # Training result callback — set by main()
+        self.on_training_complete = None
 
     @property
     def enabled(self) -> bool:
@@ -50,15 +57,47 @@ class SteadyState:
             self._profile_name = value
         self.changed.set()
 
+    @property
+    def overlay_visible(self) -> bool:
+        with self._lock:
+            return self._overlay_visible
+
+    @overlay_visible.setter
+    def overlay_visible(self, value: bool):
+        with self._lock:
+            self._overlay_visible = value
+        self.overlay_changed.set()
+
 
 def main():
+    from steady.core.ring_buffer import PositionBuffer
+    from steady.core.ml_adapter import MLAdapter
+    from steady.ui.overlay import OverlayWindow
+
     state = SteadyState()
+
+    buf = PositionBuffer(capacity=1800)
+    state.position_buffer = buf
+
     hook = InputHook(state)
+    adapter = MLAdapter(state, buf)
+
     hook.start()
-    logger.info("Steady input hook started")
+    adapter.start()
+    logger.info("Steady input hook and ML adapter started")
+
+    overlay = OverlayWindow(state, buf)
+    overlay.start()
+
+    def on_training_complete(result: dict):
+        adapter.apply_training_result(result)
+
+    state.on_training_complete = on_training_complete
 
     def on_quit():
         logger.info("Shutting down")
+        overlay.stop()
+        adapter.stop()
         hook.stop()
 
     def _signal_handler(sig, frame):
@@ -68,7 +107,6 @@ def main():
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
 
-    # build_tray returns a pystray Icon; .run() blocks the main thread
     tray = build_tray(state, on_quit)
     logger.info("Starting system tray icon")
     tray.run()

@@ -1,10 +1,12 @@
 import logging
 import threading
+import time
 
 import evdev
 
 from steady.core.filter import TremorFilter
 from steady.input.device_finder import find_primary_mouse
+from steady.input.gravity import ATSPIPoller, apply_gravity
 
 logger = logging.getLogger(__name__)
 
@@ -24,22 +26,24 @@ UINPUT_CAPABILITIES = {
     ],
 }
 
-RETRY_DELAY = 2.0  # seconds between device-not-found retries
+RETRY_DELAY = 2.0
 
 
 class InputHook:
     """
     Background thread that:
       1. Grabs the physical mouse exclusively via evdev
-      2. Passes every event through TremorFilter
-      3. Writes filtered events to a uinput virtual mouse
-
-    Controlled by a SteadyState object shared with the tray UI.
+      2. Applies TremorFilter to accumulated absolute position
+      3. Applies AT-SPI gravity pull toward nearby UI elements
+      4. Writes filtered+gravity-adjusted events to a uinput virtual mouse
+      5. Pushes (raw, filtered) positions to the shared PositionBuffer
     """
 
-    def __init__(self, state):
+    def __init__(self, state, ml_adapter=None):
         self._state = state
+        self._ml_adapter = ml_adapter
         self._stop = threading.Event()
+        self._poller = ATSPIPoller()
         self._thread = threading.Thread(
             target=self._run,
             name='input-hook',
@@ -47,14 +51,18 @@ class InputHook:
         )
 
     def start(self):
+        self._poller.start_polling()
         self._thread.start()
 
     def stop(self):
         self._stop.set()
+        self._poller.stop()
         self._thread.join(timeout=3.0)
 
+    def set_ml_adapter(self, adapter):
+        self._ml_adapter = adapter
+
     # ------------------------------------------------------------------
-    # Internal
 
     def _run(self):
         while not self._stop.is_set():
@@ -98,18 +106,14 @@ class InputHook:
     def _event_loop(self, device, ui):
         state = self._state
 
-        # Filter and position tracking
         tremor_filter = TremorFilter(state.profile_name)
+        if self._ml_adapter is not None:
+            self._ml_adapter.set_filter(tremor_filter)
 
-        # Virtual absolute position (accumulated from relative deltas)
         abs_x = 0.0
         abs_y = 0.0
-
-        # Last position we actually output (for computing output deltas)
         last_out_x = 0.0
         last_out_y = 0.0
-
-        # Sub-pixel remainder accumulator (prevents drift from float→int truncation)
         frac_x = 0.0
         frac_y = 0.0
 
@@ -117,42 +121,36 @@ class InputHook:
             if self._stop.is_set():
                 break
 
-            # React to tray state changes (enable toggle / profile switch)
             if state.changed.is_set():
                 state.changed.clear()
-                new_profile = state.profile_name
-                tremor_filter = TremorFilter(new_profile)
-                # Seed filter state with current position to avoid cursor jump
+                tremor_filter = TremorFilter(state.profile_name)
                 tremor_filter.x_state = abs_x
                 tremor_filter.y_state = abs_y
                 last_out_x = abs_x
                 last_out_y = abs_y
                 frac_x = 0.0
                 frac_y = 0.0
+                if self._ml_adapter is not None:
+                    self._ml_adapter.set_filter(tremor_filter)
 
-            # SYN events: flush the uinput buffer
             if event.type == evdev.ecodes.EV_SYN:
                 ui.write(evdev.ecodes.EV_SYN, evdev.ecodes.SYN_REPORT, 0)
                 continue
 
-            # Non-relative events (buttons, absolute, misc): pass through
             if event.type != evdev.ecodes.EV_REL:
                 ui.write(event.type, event.code, event.value)
                 continue
 
-            # Non-X/Y relative events (scroll wheel etc.): pass through
             if event.code not in (evdev.ecodes.REL_X, evdev.ecodes.REL_Y):
                 ui.write(event.type, event.code, event.value)
                 continue
 
-            # Accumulate raw movement into virtual absolute position
             if event.code == evdev.ecodes.REL_X:
                 abs_x += event.value
             else:
                 abs_y += event.value
 
             if not state.enabled:
-                # Filtering disabled: pass raw delta straight through
                 ui.write(evdev.ecodes.EV_REL, event.code, event.value)
                 last_out_x = abs_x
                 last_out_y = abs_y
@@ -160,11 +158,21 @@ class InputHook:
                 frac_y = 0.0
                 continue
 
-            # Apply tremor filter to accumulated absolute position
+            # Apply tremor filter
             fx, fy = tremor_filter.filter_position((abs_x, abs_y))
 
-            # Convert filtered absolute deltas back to relative integers.
-            # Sub-pixel accumulation prevents systematic drift.
+            # Apply AT-SPI gravity (after filter, before output)
+            if self._poller.available:
+                targets = self._poller.get_targets()
+                fx, fy = apply_gravity(fx, fy, targets)
+
+            # Push to shared ring buffer for overlay and ML
+            buf = state.position_buffer
+            if buf is not None:
+                buf.push(time.monotonic(), abs_x, abs_y, fx, fy)
+
+            # Convert filtered absolute position back to relative integers
+            # with sub-pixel accumulation to prevent drift
             frac_x += fx - last_out_x
             int_dx = int(frac_x)
             frac_x -= int_dx

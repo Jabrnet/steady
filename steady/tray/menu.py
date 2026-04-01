@@ -11,7 +11,7 @@ def build_tray(state, on_quit) -> pystray.Icon:
     """
     Build and return a pystray Icon (does not start it — call icon.run()).
 
-    state   : SteadyState instance shared with InputHook
+    state   : SteadyState instance shared with InputHook, MLAdapter, OverlayWindow
     on_quit : callable invoked before the tray icon stops
     """
 
@@ -39,6 +39,17 @@ def build_tray(state, on_quit) -> pystray.Icon:
         for name in PROFILE_NAMES
     ]
 
+    def toggle_overlay(icon, item):
+        state.overlay_visible = not state.overlay_visible
+        icon.update_menu()
+
+    def launch_training(icon, item):
+        from steady.training.game import launch_training_game
+        launch_training_game(
+            state.position_buffer,
+            state.on_training_complete,
+        )
+
     def quit_app(icon, item):
         on_quit()
         icon.stop()
@@ -51,6 +62,13 @@ def build_tray(state, on_quit) -> pystray.Icon:
         ),
         Menu.SEPARATOR,
         Item('Profile', Menu(*profile_items)),
+        Menu.SEPARATOR,
+        Item(
+            'Show Overlay',
+            toggle_overlay,
+            checked=lambda item: state.overlay_visible,
+        ),
+        Item('Training Game\u2026', launch_training),
         Menu.SEPARATOR,
         Item('Quit', quit_app),
     )
