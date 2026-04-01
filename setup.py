@@ -6,8 +6,18 @@ setup(
     packages=find_packages(),
     install_requires=[
         'numpy',
-        'pytest'
+        'evdev',
+        'pystray',
+        'Pillow',
     ],
+    extras_require={
+        'dev': ['pytest'],
+    },
+    entry_points={
+        'console_scripts': [
+            'steady-tray = steady.app:main',
+        ],
+    },
     author='Your Name',
     author_email='your.email@example.com',
     description='Tremor Assistance Accessibility Tool',

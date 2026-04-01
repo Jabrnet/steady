@@ -1,0 +1,10 @@
+# Steady tremor filter - udev rules
+# Allows members of the 'input' group to access /dev/uinput and input event devices.
+# Install: sudo cp 99-steady.rules /etc/udev/rules.d/
+#          sudo udevadm control --reload-rules && sudo udevadm trigger
+
+# Make /dev/uinput accessible to the input group (and ensure it exists at boot)
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
+
+# Make all input event devices accessible to the input group
+SUBSYSTEM=="input", GROUP="input", MODE="0660"

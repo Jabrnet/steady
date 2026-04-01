@@ -1,2 +1,5 @@
 numpy
-  pytest
+evdev
+pystray
+Pillow
+pytest
