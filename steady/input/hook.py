@@ -22,7 +22,6 @@ UINPUT_CAPABILITIES = {
         evdev.ecodes.BTN_SIDE,
         evdev.ecodes.BTN_EXTRA,
     ],
-    evdev.ecodes.EV_SYN: [evdev.ecodes.SYN_REPORT],
 }
 
 RETRY_DELAY = 2.0  # seconds between device-not-found retries
